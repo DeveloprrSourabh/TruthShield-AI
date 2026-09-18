@@ -1,37 +1,36 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 function App() {
-    const [news, setNews] = useState("");
-    const [result, setResult] = useState("");
 
-//  Detect New Function
-const detectNews = () => {
+  const [news, setNews] = useState("");
+  const [result, setResult] = useState(null);
 
-  fetch("http://127.0.0.1:5000/detect", {
-    method: "POST",
+  const verifyNews = () => {
 
-    headers: {
-      "Content-Type": "application/json"
-    },
+    fetch("http://127.0.0.1:5000/verify", {
 
-    body: JSON.stringify({
-      news: news
+      method: "POST",
+
+      headers: {
+        "Content-Type": "application/json"
+      },
+
+      body: JSON.stringify({
+        news: news
+      })
+
     })
-  })
+      .then((response) => response.json())
 
-    .then((response) => response.json())
-
-    .then((data) => {
-
-      setResult(
-        data.result + " - " + data.confidence + "%"
-      );
-
-    });
-};
+      .then((data) => {
+        setResult(data);
+      });
+  };
 
   return (
-   <div>
+
+    <div>
+
       <h1>TruthShield AI</h1>
 
       <textarea
@@ -42,12 +41,72 @@ const detectNews = () => {
 
       <br />
 
-      <button onClick={detectNews}>
-        Detect News
+      <button onClick={verifyNews}>
+        Verify News
       </button>
 
-      <h3>{result}</h3>
+      {result && (
+
+        <div>
+
+          <h2>{result.result}</h2>
+
+          <p>
+            AIS Score: {result.ais_score}%
+          </p>
+
+          <p>
+            Web Sources: {result.web_sources}
+          </p>
+
+          <p>
+            NLP Score: {result.nlp_score}%
+          </p>
+
+          <p>
+            Relationship: {result.relationship}
+          </p>
+
+          <p>
+            Reason: {result.reason}
+          </p>
+
+          <h3>Trusted Sources</h3>
+
+          {result.sources &&
+            result.sources.map((source, index) => (
+
+              <div key={index}>
+
+                <p>
+                  <strong>{index + 1}. {source.title}</strong>
+                </p>
+
+                <p>
+                  {source.content}
+                </p>
+
+                <a
+                  href={source.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  Open Source
+                </a>
+
+                <hr />
+
+              </div>
+
+            ))
+          }
+
+        </div>
+
+      )}
+
     </div>
+
   );
 }
 
