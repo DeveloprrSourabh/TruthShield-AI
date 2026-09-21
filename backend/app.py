@@ -40,13 +40,10 @@ def verify():
         }), 400
 
     try:
-
         result = verify_news(news)
-
         return jsonify(result)
 
     except Exception as e:
-
         return jsonify({
             "error": "Verification failed.",
             "details": str(e)
@@ -54,7 +51,6 @@ def verify():
 
 
 if __name__ == "__main__":
-
     app.run(
         host="0.0.0.0",
         port=5000,
