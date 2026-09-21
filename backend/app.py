@@ -5,26 +5,14 @@ from decision import verify_news
 
 app = Flask(__name__)
 
-CORS(
-    app,
-    resources={
-        r"/verify": {
-            "origins": [
-                "https://truth-shield-ai-nine.vercel.app"
-            ]
-        }
-    }
-)
-
+CORS(app)
 
 @app.route("/")
 def home():
     return "TruthShield AI Backend Running"
 
-
 @app.route("/verify", methods=["POST"])
 def verify():
-
     data = request.get_json()
 
     if not data or "news" not in data:
@@ -49,10 +37,9 @@ def verify():
             "details": str(e)
         }), 500
 
-
 if __name__ == "__main__":
     app.run(
-        host="0.0.0.0",
+        host="127.0.0.1",
         port=5000,
         debug=True
     )
