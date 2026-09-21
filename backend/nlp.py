@@ -1,171 +1,501 @@
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
-from web_search import search_news
+from sentence_transformers import CrossEncoder, SentenceTransformer
+import numpy as np
+import re
 
 
-def get_claim_keywords(claim):
+# Stronger NLI model than MiniLM
+NLI_MODEL_NAME = "cross-encoder/nli-deberta-v3-base"
 
-    stop_words = {
-        "the", "a", "an", "is", "was", "were",
-        "in", "on", "of", "to", "and", "for"
-    }
-
-    words = claim.lower().split()
-
-    keywords = []
-
-    for word in words:
-        word = word.strip(".,!?")
-
-        if word not in stop_words:
-            keywords.append(word)
-
-    return keywords
+# Used only for finding relevant evidence
+SIMILARITY_MODEL_NAME = "all-MiniLM-L6-v2"
 
 
-def calculate_similarity(claim, evidence):
+nli_model = CrossEncoder(
+    NLI_MODEL_NAME
+)
 
-    documents = [claim, evidence]
-
-    vectorizer = TfidfVectorizer()
-
-    vectors = vectorizer.fit_transform(documents)
-
-    similarity = cosine_similarity(vectors[0], vectors[1])
-
-    return similarity[0][0]
+similarity_model = SentenceTransformer(
+    SIMILARITY_MODEL_NAME
+)
 
 
-def classify_relationship(claim, evidence, similarity_score):
+def get_label_mapping():
 
-    claim_lower = claim.lower()
-    evidence_lower = evidence.lower()
+    labels = nli_model.model.config.id2label
 
-    support_words = {
-        "won": ["won", "defeated", "beat", "victory", "champions"],
-        "increased": ["increased", "rose", "grew", "higher"],
-        "approved": ["approved", "accepted", "cleared"],
-        "launched": ["launched", "introduced", "released"]
-    }
+    mapping = {}
 
-    contradiction_words = {
-        "won": ["lost", "failed", "did not win"],
-        "increased": ["decreased", "fell", "dropped", "declined"],
-        "approved": ["rejected", "denied", "not approved"],
-        "launched": ["cancelled", "not launched"]
-    }
+    for index, label in labels.items():
 
-    for claim_word, words in contradiction_words.items():
+        label = label.lower()
 
-        if claim_word in claim_lower:
+        if "entail" in label:
+            mapping["SUPPORT"] = index
 
-            for word in words:
+        elif "contrad" in label:
+            mapping["CONTRADICT"] = index
 
-                if word in evidence_lower:
-                    return "CONTRADICT"
+        elif "neutral" in label:
+            mapping["UNCERTAIN"] = index
 
-    for claim_word, words in support_words.items():
-
-        if claim_word in claim_lower:
-
-            for word in words:
-
-                if word in evidence_lower:
-                    return "SUPPORT"
-
-    if similarity_score >= 0.5:
-        return "UNCERTAIN"
-
-    return "UNCERTAIN"
+    return mapping
 
 
-def compare_with_evidence(claim, trusted_results):
+LABEL_MAPPING = get_label_mapping()
 
-    best_score = 0
-    best_evidence = None
-    best_relationship = "UNCERTAIN"
 
-    for result in trusted_results:
+def get_probabilities(prediction):
 
-        evidence = result["content"]
+    prediction = np.array(
+        prediction
+    )
 
-        score = calculate_similarity(
-            claim,
-            evidence
+    exp_values = np.exp(
+        prediction - np.max(prediction)
+    )
+
+    return (
+        exp_values /
+        exp_values.sum()
+    )
+
+
+def split_sentences(text):
+
+    text = str(text)
+
+    text = re.sub(
+        r"\[\.\.\.\]",
+        ".",
+        text
+    )
+
+    text = re.sub(
+        r"\s+",
+        " ",
+        text
+    ).strip()
+
+    sentences = re.split(
+        r"(?<=[.!?])\s+",
+        text
+    )
+
+    sentences = [
+        sentence.strip()
+        for sentence in sentences
+        if len(sentence.strip()) >= 20
+    ]
+
+    return sentences
+
+
+def get_relevant_sentences(
+    claim,
+    sources
+):
+
+    candidates = []
+
+    for source in sources[:8]:
+
+        content = source.get(
+            "content",
+            ""
         )
 
-        relationship = classify_relationship(
-            claim,
-            evidence,
-            score
+        # IMPORTANT:
+        # Do not use article titles as evidence.
+        sentences = split_sentences(
+            content
         )
 
-        if score > best_score:
+        for sentence in sentences:
 
-            best_score = score
-            best_evidence = result
-            best_relationship = relationship
+            candidates.append({
+                "text": sentence,
+                "source": source
+            })
 
-    return best_score, best_evidence, best_relationship
+    if not candidates:
+
+        return []
+
+    claim_embedding = similarity_model.encode(
+        claim,
+        normalize_embeddings=True
+    )
+
+    sentence_texts = [
+        item["text"]
+        for item in candidates
+    ]
+
+    sentence_embeddings = (
+        similarity_model.encode(
+            sentence_texts,
+            normalize_embeddings=True
+        )
+    )
+
+    similarities = np.dot(
+        sentence_embeddings,
+        claim_embedding
+    )
+
+    for i, similarity in enumerate(
+        similarities
+    ):
+
+        candidates[i][
+            "similarity"
+        ] = float(
+            similarity
+        )
+
+    candidates.sort(
+        key=lambda x: x["similarity"],
+        reverse=True
+    )
+
+    return candidates[:20]
 
 
-def analyze_news(claim, trusted_results):
+def analyze_news(
+    claim,
+    sources
+):
 
-    if not trusted_results:
+    if not claim or not claim.strip():
 
         return {
             "nlp_score": 0,
             "relationship": "UNCERTAIN",
-            "reason": "No trusted evidence was found.",
-            "evidence": None
+            "reason": "No claim provided.",
+            "evidence": ""
         }
 
-    score, best_evidence, relationship = compare_with_evidence(
-        claim,
-        trusted_results
+    if not sources:
+
+        return {
+            "nlp_score": 0,
+            "relationship": "UNCERTAIN",
+            "reason": "No web evidence available.",
+            "evidence": ""
+        }
+
+    evidence_list = (
+        get_relevant_sentences(
+            claim,
+            sources
+        )
+    )
+
+    if not evidence_list:
+
+        return {
+            "nlp_score": 0,
+            "relationship": "UNCERTAIN",
+            "reason": "No relevant evidence found.",
+            "evidence": ""
+        }
+
+    pairs = [
+        (
+            item["text"],
+            claim
+        )
+        for item in evidence_list
+    ]
+
+    predictions = nli_model.predict(
+        pairs
+    )
+
+    support_index = LABEL_MAPPING.get(
+        "SUPPORT"
+    )
+
+    contradict_index = LABEL_MAPPING.get(
+        "CONTRADICT"
+    )
+
+    uncertain_index = LABEL_MAPPING.get(
+        "UNCERTAIN"
+    )
+
+    results = []
+
+    for i, prediction in enumerate(
+        predictions
+    ):
+
+        probabilities = (
+            get_probabilities(
+                prediction
+            )
+        )
+
+        support = (
+            probabilities[
+                support_index
+            ]
+            if support_index is not None
+            else 0
+        )
+
+        contradict = (
+            probabilities[
+                contradict_index
+            ]
+            if contradict_index is not None
+            else 0
+        )
+
+        uncertain = (
+            probabilities[
+                uncertain_index
+            ]
+            if uncertain_index is not None
+            else 0
+        )
+
+        similarity = evidence_list[
+            i
+        ]["similarity"]
+
+        results.append({
+
+            "support": float(
+                support
+            ),
+
+            "contradict": float(
+                contradict
+            ),
+
+            "uncertain": float(
+                uncertain
+            ),
+
+            "similarity": float(
+                similarity
+            ),
+
+            "text": evidence_list[
+                i
+            ]["text"],
+
+            "source": evidence_list[
+                i
+            ]["source"]
+        })
+
+    # Ignore evidence that is only weakly
+    # related to the claim.
+    relevant_results = [
+        item
+        for item in results
+        if item["similarity"] >= 0.35
+    ]
+
+    if not relevant_results:
+
+        relevant_results = results[:5]
+
+    # Combine NLI confidence with
+    # semantic relevance.
+
+    for item in relevant_results:
+
+        relevance = max(
+            0,
+            item["similarity"]
+        )
+
+        item[
+            "support_strength"
+        ] = (
+            item["support"]
+            * relevance
+        )
+
+        item[
+            "contradict_strength"
+        ] = (
+            item["contradict"]
+            * relevance
+        )
+
+    best_support = max(
+        relevant_results,
+        key=lambda x:
+        x["support_strength"]
+    )
+
+    best_contradict = max(
+        relevant_results,
+        key=lambda x:
+        x["contradict_strength"]
+    )
+
+    support_strength = (
+        best_support[
+            "support_strength"
+        ]
+    )
+
+    contradict_strength = (
+        best_contradict[
+            "contradict_strength"
+        ]
+    )
+
+    support_valid = (
+        best_support["support"] >= 0.65
+        and
+        best_support["similarity"] >= 0.40
+    )
+
+    contradict_valid = (
+        best_contradict["contradict"] >= 0.65
+        and
+        best_contradict["similarity"] >= 0.40
+    )
+
+    # Strong contradiction
+    if (
+        contradict_valid
+        and
+        contradict_strength >
+        support_strength
+    ):
+
+        relationship = "CONTRADICT"
+
+        best = best_contradict
+
+        confidence = (
+            best_contradict[
+                "contradict"
+            ]
+        )
+
+    # Strong support
+    elif (
+        support_valid
+        and
+        support_strength >
+        contradict_strength
+    ):
+
+        relationship = "SUPPORT"
+
+        best = best_support
+
+        confidence = (
+            best_support[
+                "support"
+            ]
+        )
+
+    else:
+
+        relationship = "UNCERTAIN"
+
+        best = max(
+            relevant_results,
+            key=lambda x:
+            x["similarity"]
+        )
+
+        confidence = max(
+            best["support"],
+            best["contradict"],
+            best["uncertain"]
+        )
+
+    nlp_score = round(
+        confidence * 100,
+        2
     )
 
     if relationship == "SUPPORT":
 
-        reason = "The evidence supports the claim."
+        reason = (
+            "The most relevant web evidence "
+            "semantically supports the given claim."
+        )
 
     elif relationship == "CONTRADICT":
 
-        reason = "The evidence contradicts the claim."
+        reason = (
+            "The most relevant web evidence "
+            "semantically contradicts the given claim."
+        )
 
     else:
 
-        reason = "The evidence is related to the claim but does not clearly support or contradict it."
+        reason = (
+            "The available evidence is relevant, "
+            "but it does not provide sufficiently "
+            "clear semantic support or contradiction."
+        )
 
     return {
-        "nlp_score": round(score * 100, 2),
+
+        "nlp_score": nlp_score,
+
         "relationship": relationship,
+
         "reason": reason,
-        "evidence": best_evidence
+
+        "evidence": best["text"]
     }
+
+
+def test_nlp():
+
+    claim = input(
+        "Enter claim: "
+    )
+
+    sources = [
+        {
+            "title": "Example Evidence",
+
+            "content": input(
+                "Enter evidence: "
+            )
+        }
+    ]
+
+    result = analyze_news(
+        claim,
+        sources
+    )
+
+    print(
+        "\nNLP Score:",
+        result["nlp_score"]
+    )
+
+    print(
+        "Relationship:",
+        result["relationship"]
+    )
+
+    print(
+        "Reason:",
+        result["reason"]
+    )
+
+    print(
+        "Evidence:",
+        result["evidence"]
+    )
 
 
 if __name__ == "__main__":
 
-    claim = input("Enter news or claim: ")
-
-    results, trusted_results = search_news(claim)
-
-    print("\nTrusted sources found:", len(trusted_results))
-
-    result = analyze_news(
-        claim,
-        trusted_results
-    )
-
-    print("\n========== NLP RESULT ==========")
-    print("NLP Score:", result["nlp_score"])
-    print("Relationship:", result["relationship"])
-    print("Reason:", result["reason"])
-
-    if result["evidence"]:
-
-        print("\n========== BEST EVIDENCE ==========")
-        print("Title:", result["evidence"]["title"])
-        print("URL:", result["evidence"]["url"])
-        print("Content:", result["evidence"]["content"])
+    test_nlp()

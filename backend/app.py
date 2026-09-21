@@ -1,7 +1,6 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 
-from ais import classify_news, valid_detectors
 from decision import verify_news
 
 
@@ -12,30 +11,8 @@ CORS(app)
 
 @app.route("/")
 def home():
+
     return "TruthShield AI Backend Running"
-
-
-@app.route("/detect", methods=["POST"])
-def detect():
-
-    data = request.get_json()
-
-    if not data or "news" not in data:
-        return jsonify({
-            "error": "News text is required."
-        }), 400
-
-    news = data["news"]
-
-    result, confidence = classify_news(
-        news,
-        valid_detectors
-    )
-
-    return jsonify({
-        "result": result,
-        "confidence": confidence
-    })
 
 
 @app.route("/verify", methods=["POST"])
@@ -44,16 +21,37 @@ def verify():
     data = request.get_json()
 
     if not data or "news" not in data:
+
         return jsonify({
             "error": "News text is required."
         }), 400
 
-    news = data["news"]
+    news = str(data["news"]).strip()
 
-    result = verify_news(news)
+    if not news:
 
-    return jsonify(result)
+        return jsonify({
+            "error": "News text cannot be empty."
+        }), 400
+
+    try:
+
+        result = verify_news(news)
+
+        return jsonify(result)
+
+    except Exception as e:
+
+        return jsonify({
+            "error": "Verification failed.",
+            "details": str(e)
+        }), 500
 
 
 if __name__ == "__main__":
-    app.run(debug=True)
+
+    app.run(
+        host="127.0.0.1",
+        port=5000,
+        debug=True
+    )

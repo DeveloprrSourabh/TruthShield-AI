@@ -1,88 +1,190 @@
 from ais import classify_news, valid_detectors
-from web_search import search_news
+from web_search import search_web
 from nlp import analyze_news
 
 
-def make_decision(ais_score, trusted_results, nlp_result):
+def make_decision(
+    ais_result,
+    web_result,
+    nlp_result
+):
 
-    relationship = nlp_result["relationship"]
-    web_sources = len(trusted_results)
+    ais_score = ais_result.get(
+        "ais_score",
+        0
+    )
 
-    if web_sources == 0:
+    web_score = web_result.get(
+        "web_score",
+        0
+    )
 
-        result = "UNCERTAIN"
-        reason = "No trusted web evidence was found."
+    nlp_score = nlp_result.get(
+        "nlp_score",
+        0
+    )
 
-    elif relationship == "CONTRADICT":
+    relationship = nlp_result.get(
+        "relationship",
+        "UNCERTAIN"
+    )
 
+    # Strong semantic contradiction
+    if (
+        relationship == "CONTRADICT"
+        and nlp_score >= 70
+    ):
         result = "FAKE"
-        reason = "Trusted web evidence contradicts the claim."
 
-    elif relationship == "SUPPORT":
-
-        if ais_score < 10:
-            result = "REAL"
-            reason = "Trusted web evidence supports the claim and AIS found low suspicious-pattern matching."
-        else:
-            result = "UNCERTAIN"
-            reason = "Web evidence supports the claim, but AIS found suspicious patterns."
+    # Strong semantic support
+    elif (
+        relationship == "SUPPORT"
+        and nlp_score >= 70
+    ):
+        result = "REAL"
 
     else:
-
-        if ais_score >= 10:
-            result = "FAKE"
-            reason = "The evidence is uncertain and AIS found suspicious patterns."
-        else:
-            result = "UNCERTAIN"
-            reason = "The available evidence is not sufficient for a clear decision."
+        result = "UNCERTAIN"
 
     return {
         "result": result,
-        "ais_score": ais_score,
-        "web_sources": web_sources,
-        "nlp_score": nlp_result["nlp_score"],
+        "ais_score": round(
+            ais_score,
+            2
+        ),
+        "web_score": round(
+            web_score,
+            2
+        ),
+        "nlp_score": round(
+            nlp_score,
+            2
+        ),
         "relationship": relationship,
-        "reason": reason,
-        "sources": trusted_results
+        "reason": nlp_result.get(
+            "reason",
+            "Insufficient evidence."
+        ),
+        "evidence": nlp_result.get(
+            "evidence",
+            ""
+        ),
+        "sources": web_result.get(
+            "sources",
+            []
+        )
     }
 
 def verify_news(news):
 
-    # AIS verification
-    _, ais_score = classify_news(
+    # AIS
+    ais_result, ais_score = classify_news(
         news,
         valid_detectors
     )
 
-    # Web verification
-    results, trusted_results = search_news(news)
+    ais_data = {
+        "ais_score": ais_score,
+        "result": ais_result
+    }
 
-    # NLP verification
-    nlp_result = analyze_news(
-        news,
-        trusted_results
+    # Web Search
+    web_result = search_web(
+        news
     )
 
-    # Final decision
-    final_result = make_decision(
-        ais_score,
-        trusted_results,
+    # NLP Verification
+    nlp_result = analyze_news(
+        news,
+        web_result.get(
+            "sources",
+            []
+        )
+    )
+
+    # Final Decision
+    return make_decision(
+        ais_data,
+        web_result,
         nlp_result
     )
 
-    return final_result
+
+def test_decision():
+
+    news = input(
+        "Enter news: "
+    )
+
+    result = verify_news(
+        news
+    )
+
+    print(
+        "\n========== TruthShield AI =========="
+    )
+
+    print(
+        "Result:",
+        result["result"]
+    )
+
+    print(
+        "AIS Score:",
+        result["ais_score"]
+    )
+
+    print(
+        "Web Score:",
+        result["web_score"]
+    )
+
+    print(
+        "NLP Score:",
+        result["nlp_score"]
+    )
+
+    print(
+        "Relationship:",
+        result["relationship"]
+    )
+
+    print(
+        "Reason:",
+        result["reason"]
+    )
+
+    print(
+        "\nEvidence:"
+    )
+
+    print(
+        result["evidence"]
+    )
+
+    print(
+        "\nSources:"
+    )
+
+    for source in result["sources"]:
+
+        print(
+            source.get(
+                "title",
+                ""
+            )
+        )
+
+        print(
+            source.get(
+                "url",
+                ""
+            )
+        )
+
+        print()
 
 
 if __name__ == "__main__":
 
-    news = input("Enter news or claim: ")
-
-    result = verify_news(news)
-
-    print("\n========== FINAL RESULT ==========")
-    print("Result:", result["result"])
-    print("AIS Score:", result["ais_score"])
-    print("Web Sources:", result["web_sources"])
-    print("NLP Score:", result["nlp_score"])
-    print("Relationship:", result["relationship"])
-    print("Reason:", result["reason"])
+    test_decision()
