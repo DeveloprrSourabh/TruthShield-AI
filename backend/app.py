@@ -3,15 +3,22 @@ from flask_cors import CORS
 
 from decision import verify_news
 
-
 app = Flask(__name__)
 
-CORS(app)
+CORS(
+    app,
+    resources={
+        r"/verify": {
+            "origins": [
+                "https://truth-shield-ai-nine.vercel.app"
+            ]
+        }
+    }
+)
 
 
 @app.route("/")
 def home():
-
     return "TruthShield AI Backend Running"
 
 
@@ -21,7 +28,6 @@ def verify():
     data = request.get_json()
 
     if not data or "news" not in data:
-
         return jsonify({
             "error": "News text is required."
         }), 400
@@ -29,7 +35,6 @@ def verify():
     news = str(data["news"]).strip()
 
     if not news:
-
         return jsonify({
             "error": "News text cannot be empty."
         }), 400
@@ -51,7 +56,7 @@ def verify():
 if __name__ == "__main__":
 
     app.run(
-        host="127.0.0.1",
+        host="0.0.0.0",
         port=5000,
         debug=True
     )
