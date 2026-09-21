@@ -22,7 +22,7 @@ function App() {
     setOpenSources({});
 
     try {
-      const response = await fetch("https://hearty-communication-production-6a23.up.railway.app/verify", {
+      const response = await fetch("truthshield-ai-production-f305.up.railway.app/verify", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
